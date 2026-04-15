@@ -5,9 +5,12 @@
 // The cpus command provides a simple expression language to select a set of
 // CPUs and run a command limited to those CPUs.
 //
-// Usage: cpus [flags] [filters/sorters...] [-- command args...]
+// Usage:
 //
-// By default, cpus runs the given command with a restricted CPU set.
+//	cpus [flags] [filters/sorters...] [-- command args...]
+//
+// By default, cpus runs the given command with a restricted CPU set. If -limit
+// is a sweep expression, it runs the command for each limit in the sweep.
 //
 // If no command is provided, it prints the matching CPUs.
 //
@@ -38,7 +41,7 @@
 // restricts to hardware thread 0 across all cores. The named filters are
 // 'present', 'possible', 'online', and 'offline'.
 //
-// Fields:
+// # Fields
 //
 //	socket     Physical CPU socket or package ID
 //	die        Die index within a multi-die socket (if applicable)
@@ -48,4 +51,41 @@
 //	processor  Processor's global number (each hardware thread counts
 //	           as a 'processor').
 //	node       NUMA node ID
+//
+// # Sweeps
+//
+// The -limit flag accepts a "sweep" expression, which will run the command or
+// print the matching CPUs for a series of limits. The general form of a sweep
+// is a space- or comma-separated list of terms, where each term is either a
+// single number, "N", or "start..end..incr". "start" may be omitted and
+// defaults to 1. "end" may be omitted and defaults to "N". "..incr" may be
+// omitted and defaults to 1. "start" or "end" can be "N", which represents the
+// max (the number of processes minus the -start flag).
+//
+// # Examples
+//
+// To benchmark the scalability of a program across a sweep of CPUs, while
+// minimizing hyperthread interactions and cross-NUMA node interactions, use:
+//
+//	cpus -limit 1.. rr -- command
+//
+// This will fill the first hyperthread across the whole machine before going
+// back to the next hyperthread, and it will fill the first hyperthread on the
+// first NUMA node before spilling to the next NUMA node. This way, there are
+// clear boundaries between where we spill past one NUMA node, and where we
+// start using hyperthreads.
+//
+// To completely eliminate the effect of hyperthreads, use:
+//
+//	cpus -limit 1.. thread==0 rr -- command
+//
+// This will produce the same sequence as the previous example, but strictly
+// limited to hyperthread 0.
+//
+// Sweeps can also be used to print CPU sets that can be passed to other
+// commands. For example,
+//
+//	for mask in $(cpus -limit 1.. rr); do taskset -c $mask ls; done
+//
+// will print a sequence of cpu masks, which are then passed to taskset.
 package main

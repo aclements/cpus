@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -30,8 +31,8 @@ var docStr string
 
 func main() {
 	flag.Usage = func() {
-		progRe := regexp.MustCompile(`^((?:Usage:)?\s+)cpus`)
-		progRepl := "${1}" + strings.ReplaceAll(filepath.Base(os.Args[0]), "$", "$$")
+		progRe := regexp.MustCompile(`\bcpus\b`)
+		progRepl := filepath.Base(os.Args[0])
 		var lines []string
 		flagIndex := -1
 		for line := range strings.SplitSeq(docStr, "\n") {
@@ -43,12 +44,12 @@ func main() {
 			if after, ok := strings.CutPrefix(line, "//"); ok {
 				after = strings.TrimPrefix(after, " ")
 				if strings.HasPrefix(after, "\t") {
-					after = "    " + after[1:]
+					after = "    " + progRe.ReplaceAllLiteralString(after[1:], progRepl)
 				}
 				after = progRe.ReplaceAllString(after, progRepl)
 				lines = append(lines, after)
 			}
-			if strings.HasPrefix(line, "// Usage:") {
+			if strings.Contains(line, "[flags]") {
 				flagIndex = len(lines)
 			}
 		}
@@ -62,7 +63,8 @@ func main() {
 
 	hotplugFlag := flag.Bool("hotplug", false, "enable/disable CPUs via hotplug")
 	formatFlag := flag.String("format", "", "output format: compact (default), comma, space, table")
-	limitFlag := flag.Int("limit", 0, "limit to `n` processors")
+	var limitFlag sweepFlag
+	flag.Var(&limitFlag, "limit", "limit to `n` processors, or sweep [n]..[m][..incr] processors")
 	startFlag := flag.Int("start", 0, "skip the first `start` matching processors")
 
 	flag.Parse()
@@ -88,7 +90,7 @@ func main() {
 		mode = "taskset"
 	case *hotplugFlag:
 		mode = "hotplug"
-	case len(toolArgs) == 0 && *formatFlag == "":
+	case len(toolArgs) == 0 && *formatFlag == "" && len(limitFlag) == 0 && *startFlag == 0:
 		// No filters, sorters, or command.
 		flag.Usage()
 		os.Exit(1)
@@ -120,27 +122,33 @@ func main() {
 			selection = nil
 		}
 	}
-	if *limitFlag > 0 && *limitFlag < len(selection) {
-		selection = selection[:*limitFlag]
+
+	limits := limitFlag.Sequence(len(selection))
+	if mode == "hotplug" && len(limits) != 1 {
+		fmt.Fprintf(os.Stderr, "Cannot use -hotplug with a -limit sweep\n")
+		os.Exit(1)
 	}
 
-	switch mode {
-	case "taskset":
-		if err := doTaskset(threadIDs(selection), cmdArgs); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+	for _, limit := range limits {
+		sel1 := selection[:limit]
+		switch mode {
+		case "taskset":
+			if err := doTaskset(threadIDs(sel1), cmdArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 
-	case "hotplug":
-		if err := doHotplug(realFS, threadIDs(selection)); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		case "hotplug":
+			if err := doHotplug(realFS, threadIDs(sel1)); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 
-	case "list":
-		if err := doList(os.Stdout, m, selection, *formatFlag); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
+		case "list":
+			if err := doList(os.Stdout, m, sel1, *formatFlag); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	}
 }
@@ -177,13 +185,16 @@ func doTaskset(resolvedIDs []int, cmdArgs []string) error {
 		return fmt.Errorf("setting affinity: %v", err)
 	}
 
-	path, err := exec.LookPath(cmdArgs[0])
-	if err != nil {
-		return fmt.Errorf("finding command: %v", err)
-	}
+	// Ignore signals in the parent so they go to the child.
+	signal.Ignore(os.Interrupt, syscall.SIGQUIT)
+	defer signal.Reset(os.Interrupt, syscall.SIGQUIT)
 
-	fmt.Fprintf(os.Stderr, "Running %s\n", strings.Join(cmdArgs, " "))
-	return syscall.Exec(path, cmdArgs, os.Environ())
+	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+
+	return cmd.Run()
 }
 
 type writeFileFS interface {
