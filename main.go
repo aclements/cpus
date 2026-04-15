@@ -67,18 +67,25 @@ func main() {
 	flag.Var(&limitFlag, "limit", "limit to `n` processors, or sweep [n]..[m][..incr] processors")
 	startFlag := flag.Int("start", 0, "skip the first `start` matching processors")
 
-	flag.Parse()
-
-	// Find "--" to separate tool args from command in flag.Args()
+	// Split the command line argments at "--" before calling flag.Parse. This is
+	// necessary because if there are no positional arguments before the "--",
+	// flag.Parse will consume the "--" and we'll lose the separator.
 	var cmdArgs []string
-	toolArgs := flag.Args()
-	for i, arg := range toolArgs {
+	argsToParse := os.Args[1:]
+	for i, arg := range os.Args {
+		if i == 0 {
+			continue
+		}
 		if arg == "--" {
-			cmdArgs = toolArgs[i+1:]
-			toolArgs = toolArgs[:i]
+			cmdArgs = os.Args[i+1:]
+			argsToParse = os.Args[1:i]
 			break
 		}
 	}
+
+	flag.CommandLine.Parse(argsToParse)
+
+	toolArgs := flag.Args()
 
 	var mode string
 	switch {
@@ -95,10 +102,14 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	default:
+		if *formatFlag == "" {
+			*formatFlag = "compact"
+		}
 		mode = "list"
 	}
-	if *formatFlag == "" {
-		*formatFlag = "compact"
+	if mode != "list" && *formatFlag != "" {
+		fmt.Fprintf(os.Stderr, "-format can only be used in list mode\n")
+		os.Exit(1)
 	}
 
 	sysfs := os.DirFS("/")
@@ -110,7 +121,7 @@ func main() {
 
 	selection, err := filterAndSort(m, sysfs, toolArgs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error processing threads: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 

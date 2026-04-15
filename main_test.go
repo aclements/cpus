@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -237,4 +238,13 @@ func TestDoList(t *testing.T) {
 			}
 		})
 	}
+}
+
+func BenchmarkSilly(b *testing.B) {
+	var x atomic.Int32
+	b.RunParallel(func(p *testing.PB) {
+		for p.Next() {
+			x.Add(1)
+		}
+	})
 }
