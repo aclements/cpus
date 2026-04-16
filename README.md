@@ -32,7 +32,7 @@ node, we can use a sorter with a limit.
 
   ./cpus -limit 8 node -- ls
 
-# Benchmark sweeps
+# Benchmark examples
 
 We can use "sweep" syntax to run scalability benchmarks across a sequence of CPU
 masks. A basic sweep looks like
