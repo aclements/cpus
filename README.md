@@ -2,7 +2,7 @@ The cpus command provides a simple expression language to select a set of CPUs
 and run a command limited to those CPUs.
 
 For detailed command documentation, see
-[pkg.go.dev](https://pkg.go.dev/github.com/aclements/cpus)
+[pkg.go.dev](https://pkg.go.dev/github.com/aclements/cpus/cmd/cpus)
 
 # Examples
 
