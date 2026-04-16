@@ -52,10 +52,11 @@ func StrRange(cpus []int) string {
 	if len(cpus) == 0 {
 		return ""
 	}
+	cpus = slices.Clone(cpus)
 	if !slices.IsSorted(cpus) {
-		cpus = slices.Clone(cpus)
 		slices.Sort(cpus)
 	}
+	cpus = slices.Compact(cpus)
 
 	var spans [][]int
 	for _, cpu := range cpus {

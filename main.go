@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -62,10 +61,11 @@ func main() {
 	}
 
 	hotplugFlag := flag.Bool("hotplug", false, "enable/disable CPUs via hotplug")
-	formatFlag := flag.String("format", "", "output format: compact (default), comma, space, table")
+	formatFlag := flag.String("format", "", "output format: compact (default), comma, space, summary, table")
 	var limitFlag sweepFlag
 	flag.Var(&limitFlag, "limit", "limit to `n` processors, or sweep [n]..[m][..incr] processors")
 	startFlag := flag.Int("start", 0, "skip the first `start` matching processors")
+	quietFlag := flag.Bool("q", false, "omit summary lines before each command")
 
 	// Split the command line argments at "--" before calling flag.Parse. This is
 	// necessary because if there are no positional arguments before the "--",
@@ -144,6 +144,9 @@ func main() {
 		sel1 := selection[:limit]
 		switch mode {
 		case "taskset":
+			if !*quietFlag {
+				fmt.Fprintf(os.Stderr, "# %s\n", formatSummary(m, sel1))
+			}
 			if err := doTaskset(threadIDs(sel1), cmdArgs); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
@@ -290,25 +293,20 @@ func doList(w io.Writer, m *cpuinfo.Machine, selection []*cpuinfo.Thread, format
 	switch format {
 	case "compact":
 		fmt.Fprintln(w, cpuinfo.StrRange(threadIDs(selection)))
-	case "comma":
+	case "comma", "space":
 		var s []string
 		for _, id := range threadIDs(selection) {
 			s = append(s, strconv.Itoa(id))
 		}
-		fmt.Fprintln(w, strings.Join(s, ","))
-	case "space":
-		var s []string
-		for _, id := range threadIDs(selection) {
-			s = append(s, strconv.Itoa(id))
+		sep := ","
+		if format == "space" {
+			sep = " "
 		}
-		fmt.Fprintln(w, strings.Join(s, " "))
+		fmt.Fprintln(w, strings.Join(s, sep))
+	case "summary":
+		fmt.Fprintln(w, formatSummary(m, selection))
 	case "table":
-		columns := []string{"node", "socket", "die", "core", "thread", "processor"}
-		if shouldHideDie(m) {
-			i := slices.Index(columns, "die")
-			columns = slices.Replace(columns, i, i+1)
-		}
-
+		columns := listFields(m)
 		tw := tabwriter.NewWriter(w, 0, 0, 1, ' ', 0)
 		fmt.Fprintln(tw, strings.Join(columns, "\t"))
 		for _, t := range selection {
@@ -324,6 +322,29 @@ func doList(w io.Writer, m *cpuinfo.Machine, selection []*cpuinfo.Thread, format
 		return fmt.Errorf("unknown format: %s", format)
 	}
 	return nil
+}
+
+func listFields(m *cpuinfo.Machine) []string {
+	fields := []string{"node", "socket"}
+	if !shouldHideDie(m) {
+		fields = append(fields, "die")
+	}
+	fields = append(fields, "die", "core", "thread", "processor")
+	return fields
+}
+
+func formatSummary(m *cpuinfo.Machine, selection []*cpuinfo.Thread) string {
+	fields := listFields(m)
+	var parts []string
+	for _, field := range fields {
+		var set []int
+		proj := projections[field]
+		for _, sel := range selection {
+			set = append(set, proj(sel))
+		}
+		parts = append(parts, fmt.Sprintf("%ss %s", field, cpuinfo.StrRange(set)))
+	}
+	return strings.Join(parts, " ")
 }
 
 func shouldHideDie(m *cpuinfo.Machine) bool {
